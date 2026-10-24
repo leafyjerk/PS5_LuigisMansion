@@ -1,0 +1,47 @@
+diff --git a/lib/dawn/BackendBinding.cpp b/lib/dawn/BackendBinding.cpp
+index 447ead8..8ce4942 100644
+--- a/lib/dawn/BackendBinding.cpp
++++ b/lib/dawn/BackendBinding.cpp
+@@ -28,6 +28,13 @@ std::shared_ptr<wgpu::ChainedStruct> SetupWindowAndGetSurfaceDescriptor(SDL_Wind
+   desc->hwnd = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr);
+   desc->hinstance = SDL_GetPointerProperty(props, SDL_PROP_WINDOW_WIN32_INSTANCE_POINTER, nullptr);
+   return std::move(desc);
++#elif defined(__PROSPERO__)
++  // PlayStation 5: one output and no window. Dawn's PS5 port takes the Switch's
++  // native-window descriptor for it (VK_KHR_display underneath); any token will do.
++  static int output;
++  std::shared_ptr<wgpu::SurfaceSourceSwitchNWindow> desc = std::make_shared<wgpu::SurfaceSourceSwitchNWindow>();
++  desc->window = &output;
++  return std::move(desc);
+ #elif defined(SDL_PLATFORM_LINUX)
+   const char* driver = SDL_GetCurrentVideoDriver();
+   if (SDL_strcmp(driver, "wayland") == 0) {
+diff --git a/lib/gfx/dds_io.cpp b/lib/gfx/dds_io.cpp
+index 810c79e..9676965 100644
+--- a/lib/gfx/dds_io.cpp
++++ b/lib/gfx/dds_io.cpp
+@@ -106,17 +106,24 @@ std::optional<uint32_t> resolve_mip_count(const DDSHeader& header) noexcept {
+ 
+ std::optional<wgpu::TextureFormat> resolve_dx10_format(uint32_t dxgiFormat) noexcept {
+   switch (dxgiFormat) {
++  // The _SRGB codes (29, 91, 72, 78, 99) are what many DDS exporters write for colour textures.
++  // They are read as their UNORM formats: the texels are sampled as stored, as a .png's are.
+   case 28:
++  case 29:
+     return wgpu::TextureFormat::RGBA8Unorm;
+   case 87:
++  case 91:
+     return wgpu::TextureFormat::BGRA8Unorm;
+   case 71:
++  case 72:
+     return wgpu::TextureFormat::BC1RGBAUnorm;
+   case 77:
++  case 78:
+     return wgpu::TextureFormat::BC3RGBAUnorm;
+   case 83:
+     return wgpu::TextureFormat::BC5RGUnorm;
+   case 98:
++  case 99:
+     return wgpu::TextureFormat::BC7RGBAUnorm;
+   case 134:
+     return wgpu::TextureFormat::ASTC4x4Unorm;

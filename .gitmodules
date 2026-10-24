@@ -1,0 +1,3 @@
+[submodule "vendor/luigis-mansion-recompiled"]
+	path = vendor/luigis-mansion-recompiled
+	url = https://github.com/rob646464/luigis-mansion-recompiled.git

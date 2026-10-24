@@ -1,0 +1,5 @@
+# Everything here runs or is applied inside Linux (WSL): Unix line endings, whatever Git for Windows' autocrlf says
+* text=auto eol=lf
+*.png binary
+*.dds binary
+*.bin binary

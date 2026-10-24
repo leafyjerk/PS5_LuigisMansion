@@ -1,0 +1,379 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index e710396..60f5a13 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -258,8 +258,14 @@ endif ()
+ set(LM_DOL "${CMAKE_SOURCE_DIR}/Luigis Mansion US/sys/main.dol" CACHE FILEPATH
+     "Path to your Luigi's Mansion main.dol, extracted from your own disc")
+ set(LM_DOL_VERSION "GLME01" CACHE STRING "Release of LM_DOL: GLME01 (USA) or GLMP01 (Europe)")
+-if (EXISTS ${LM_DOL})
++# LM_RECOMP_PREGEN: a folder lmrecompile already wrote (a cross build cannot run the lmrecompile it
++# builds: the PS5 port runs it on the host first, ps5-lm/tools/recompile.sh).
++set(LM_RECOMP_PREGEN "" CACHE PATH "Recompiled sources made beforehand by lmrecompile (cross builds)")
++if (EXISTS ${LM_DOL} OR LM_RECOMP_PREGEN)
+     set(LM_RECOMP_DIR ${CMAKE_BINARY_DIR}/recomp_gen)
++    if (LM_RECOMP_PREGEN)
++        set(LM_RECOMP_DIR ${LM_RECOMP_PREGEN})
++    endif ()
+     if (LM_DOL_VERSION STREQUAL "GLMP01")
+         set(_recomp_cfg --symbols ${CMAKE_SOURCE_DIR}/decomp/config/GLMP01_00/symbols.txt
+             --version-map ${CMAKE_SOURCE_DIR}/tools/recomp/GLMP01_map.txt)
+@@ -282,13 +288,15 @@ if (EXISTS ${LM_DOL})
+         endif ()
+         list(APPEND _recomp_files ${LM_RECOMP_DIR}/funcs_${_i}.cpp)
+     endforeach ()
+-    add_custom_command(
+-        OUTPUT ${_recomp_files} ${LM_RECOMP_DIR}/funcs.h ${LM_RECOMP_DIR}/summary.txt
+-        COMMAND lmrecompile --dol ${LM_DOL} --version ${LM_DOL_VERSION} ${_recomp_cfg}
+-            --hooks ${CMAKE_SOURCE_DIR}/tools/recomp/hooks.txt --out ${LM_RECOMP_DIR}
+-        DEPENDS lmrecompile ${LM_DOL} ${_recomp_deps} ${CMAKE_SOURCE_DIR}/tools/recomp/hooks.txt
+-        COMMENT "Recompiling ${LM_DOL}"
+-        VERBATIM)
++    if (NOT LM_RECOMP_PREGEN)
++        add_custom_command(
++            OUTPUT ${_recomp_files} ${LM_RECOMP_DIR}/funcs.h ${LM_RECOMP_DIR}/summary.txt
++            COMMAND lmrecompile --dol ${LM_DOL} --version ${LM_DOL_VERSION} ${_recomp_cfg}
++                --hooks ${CMAKE_SOURCE_DIR}/tools/recomp/hooks.txt --out ${LM_RECOMP_DIR}
++            DEPENDS lmrecompile ${LM_DOL} ${_recomp_deps} ${CMAKE_SOURCE_DIR}/tools/recomp/hooks.txt
++            COMMENT "Recompiling ${LM_DOL}"
++            VERBATIM)
++    endif ()
+ 
+     add_executable(lmrecomp ${RECOMP_RUNTIME_SOURCES} ${_recomp_files})
+     lm_runtime_target(lmrecomp)
+diff --git a/src/port/crash_handler.cpp b/src/port/crash_handler.cpp
+index 36f5918..d72f565 100644
+--- a/src/port/crash_handler.cpp
++++ b/src/port/crash_handler.cpp
+@@ -152,7 +152,14 @@ void onSignal(int sig, siginfo_t* info, void* uctx) {
+     recovery::onCrash(strsignal(sig));
+     const void* pc = nullptr;
+     const void* sp = nullptr;
+-#if defined(__x86_64__)
++#if defined(__PROSPERO__) || defined(__FreeBSD__)
++    if (uctx) {
++        // FreeBSD's machine context (the PS5's; the payload SDK's sys/_ucontext.h)
++        const auto* uc = static_cast<const ucontext_t*>(uctx);
++        pc = reinterpret_cast<const void*>(uc->uc_mcontext.mc_rip);
++        sp = reinterpret_cast<const void*>(uc->uc_mcontext.mc_rsp);
++    }
++#elif defined(__x86_64__)
+     if (uctx) {
+         const auto* uc = static_cast<const ucontext_t*>(uctx);
+         pc = reinterpret_cast<const void*>(uc->uc_mcontext.gregs[REG_RIP]);
+@@ -256,6 +263,13 @@ void dumpAllThreads(const char* reason) {
+     std::fprintf(stderr, "=== end of thread stacks ===\n");
+     std::fflush(stderr);
+ }
++#elif defined(__PROSPERO__)
++// PS5: no /proc and no per-thread signals to a title's own threads; the hang line says what
++// the main thread was doing, and the console's own crash report has the stacks.
++void dumpAllThreads(const char* reason) {
++    std::fprintf(stderr, "\n=== %s: thread stacks are not available on the PS5 ===\n", reason);
++    std::fflush(stderr);
++}
+ #else
+ // Linux (issue #11: a Steam Deck log said nothing about where the game stopped): each thread is
+ // sent a signal whose handler writes its own backtrace ("binary(symbol+off) [addr]" lines, without
+diff --git a/src/port/install.cpp b/src/port/install.cpp
+index b803399..f8d6c54 100644
+--- a/src/port/install.cpp
++++ b/src/port/install.cpp
+@@ -176,6 +176,15 @@ fs::path sysDir(Kind, bool create) {
+     if (create) fs::create_directories(longPath(dir), ec);
+     return dir;
+ }
++#elif defined(__PROSPERO__)
++// PS5: a title sees its own folder (/app0, which is /data/homebrew/<TITLE_ID>) and nothing else of
++// /data. Settings, saves and caches are all in its userdata folder, flat as on Windows.
++fs::path sysDir(Kind, bool create) {
++    fs::path dir = "/app0/userdata";
++    std::error_code ec;
++    if (create) fs::create_directories(dir, ec);
++    return dir;
++}
+ #else
+ // XDG base directory: $<var> if set to an absolute path, else $HOME/<fallback>.
+ fs::path sysDir(Kind kind, bool create) {
+@@ -225,6 +234,8 @@ fs::path computeExeDir() {
+     const DWORD n = GetModuleFileNameW(nullptr, buf.data(), DWORD(buf.size()));
+     buf.resize(n);
+     return fs::path(buf).parent_path();
++#elif defined(__PROSPERO__)
++    return "/app0";  // the title's folder; eboot.bin and pipelines.bin are there
+ #else
+     std::error_code ec;
+     const fs::path p = fs::read_symlink("/proc/self/exe", ec);
+@@ -867,6 +878,10 @@ void relaunch(bool setup, const std::filesystem::path& exePath) {
+     } else if (!exePath.empty()) {
+         return;  // the updater reports it
+     }
++#elif defined(__PROSPERO__)
++    // A title cannot start another process, itself included: the player starts it again.
++    (void)setup;
++    if (!exePath.empty()) return;  // the caller reports it
+ #else
+     std::vector<char*> argv;
+     for (auto& a : sArgs) argv.push_back(a.data());
+diff --git a/src/port/settings.h b/src/port/settings.h
+index 09022d9..65dad45 100644
+--- a/src/port/settings.h
++++ b/src/port/settings.h
+@@ -20,7 +20,11 @@ struct VideoSettings {
+     // Presentation frame rate. 30 = the game's own rate, drawn directly (no interpolation);
+     // above 30 the frames in between are interpolated (src/recomp/interp.*). matchDisplay
+     // uses the refresh rate of the display the window is on instead of targetFps.
++#ifdef __PROSPERO__
++    int targetFps = 60;         // PS5: the TV's 60 Hz, every other frame interpolated
++#else
+     int targetFps = 30;         // kMinFps..kMaxFps
++#endif
+     bool unlimitedFps = false;  // interpolated, as fast as the PC can (no frame-rate cap or schedule)
+     bool matchDisplay = false;
+     AspectMode aspect = AspectMode::Auto;
+diff --git a/src/port/update.cpp b/src/port/update.cpp
+index 22c76c9..de3d096 100644
+--- a/src/port/update.cpp
++++ b/src/port/update.cpp
+@@ -1443,7 +1443,7 @@ void forwardOldLauncher(const fs::path& dir) {
+ bool sameOrInside(const fs::path& p, const fs::path& dir) {
+     const fs::path a = p.lexically_normal(), b = dir.lexically_normal();
+     auto it = a.begin();
+-    for (auto& part : b) {
++    for (const auto& part : b) {
+         if (part.empty()) continue;  // trailing separator of dir
+         if (it == a.end()) return false;
+ #ifdef _WIN32
+@@ -1503,6 +1503,9 @@ State state() {
+ }
+ 
+ void startupCheck() {
++#ifdef __PROSPERO__
++    return;  // PS5: no updater (a title has no network here and cannot replace itself)
++#endif
+     if (!port::settings().updates.checkAtStartup) {
+         ulog("startup check off (F1 > Game)");
+         return;
+@@ -1520,6 +1523,9 @@ void startupCheck() {
+ }
+ 
+ void checkNow() {
++#ifdef __PROSPERO__
++    return;  // PS5: no updater (a title has no network here and cannot replace itself)
++#endif
+     {
+         std::lock_guard lk(sM);
+         if (sBusy) return;
+@@ -1531,6 +1537,9 @@ void checkNow() {
+ }
+ 
+ void download() {
++#ifdef __PROSPERO__
++    return;  // PS5: no updater (a title has no network here and cannot replace itself)
++#endif
+     {
+         std::lock_guard lk(sM);
+         if (sBusy || (sState.phase != Phase::Available && sState.phase != Phase::Failed) || sCand.info.tag.empty()) return;
+@@ -1579,6 +1588,9 @@ void download() {
+ void cancel() { sCancel = true; }
+ 
+ void installAndRestart() {
++#ifdef __PROSPERO__
++    return;  // PS5: no updater (a title has no network here and cannot replace itself)
++#endif
+     fs::path root;
+     std::string tag;
+     {
+@@ -1723,6 +1735,9 @@ bool dismissed() {
+ }
+ 
+ void cleanupAfterUpdate() {
++#ifdef __PROSPERO__
++    return;  // PS5: no updater (a title has no network here and cannot replace itself)
++#endif
+     const fs::path dir = installDir();
+     std::error_code ec;
+ #ifndef _WIN32
+diff --git a/src/recomp/controls.cpp b/src/recomp/controls.cpp
+index 4019f93..d98d685 100644
+--- a/src/recomp/controls.cpp
++++ b/src/recomp/controls.cpp
+@@ -363,7 +363,9 @@ Profile padDefaults(SDL_GamepadType type, const std::string& name) {
+         b[tZ][1] = button(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER);
+         b[tL][0] = axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER, 1);
+         b[tR][0] = axis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 1);
++#ifndef __PROSPERO__  // PS5: the touch pad's click ("back") opens the settings menu (menu.cpp)
+         b[tStart][1] = button(SDL_GAMEPAD_BUTTON_BACK);
++#endif
+     }
+     b[tDUp][0] = button(SDL_GAMEPAD_BUTTON_DPAD_UP);
+     b[tDDown][0] = button(SDL_GAMEPAD_BUTTON_DPAD_DOWN);
+diff --git a/src/recomp/ctx.h b/src/recomp/ctx.h
+index 95721c7..5299f63 100644
+--- a/src/recomp/ctx.h
++++ b/src/recomp/ctx.h
+@@ -30,6 +30,13 @@ constexpr u32 kLockedCacheOffset = 0x01800000;  // host offset of the 0xE0000000
+ constexpr u32 kHostMemSize = 0x04000000;
+ constexpr u32 kHostMemMask = kHostMemSize - 1;
+ 
++// FreeBSD's <sys/endian.h> (the PS5's C library) defines these names as macros.
++#ifdef bswap32
++#undef bswap32
++#endif
++#ifdef bswap16
++#undef bswap16
++#endif
+ inline u32 bswap32(u32 v) { return __builtin_bswap32(v); }
+ inline u16 bswap16(u16 v) { return __builtin_bswap16(v); }
+ 
+diff --git a/src/recomp/hidden_mansion.cpp b/src/recomp/hidden_mansion.cpp
+index 84050fa..67a945d 100644
+--- a/src/recomp/hidden_mansion.cpp
++++ b/src/recomp/hidden_mansion.cpp
+@@ -44,13 +44,16 @@ std::string overlayDir() {
+     static const std::string dir = [] {
+         const char* env = std::getenv("LM_HM_OVERLAY");
+         std::filesystem::path d;
++        // (error_code forms: a folder the program may not look into, as everything above its
++        // own folder is for a PS5 title, is "not there", not an exception)
++        std::error_code ec;
+         if (env && *env) {
+             d = env;
+-        } else if (std::filesystem::exists(port::longPath(port::hiddenMansionOverlayDir() / "manifest.txt"))) {
++        } else if (std::filesystem::exists(port::longPath(port::hiddenMansionOverlayDir() / "manifest.txt"), ec)) {
+             d = port::hiddenMansionOverlayDir();  // built by setup (docs/SETUP.md)
+         } else {
+             for (auto p = std::filesystem::current_path();; p = p.parent_path()) {
+-                if (std::filesystem::exists(p / "orig" / "hidden_mansion" / "manifest.txt")) {
++                if (std::filesystem::exists(p / "orig" / "hidden_mansion" / "manifest.txt", ec)) {
+                     d = p / "orig" / "hidden_mansion";
+                     break;
+                 }
+@@ -192,7 +195,8 @@ Variant initialVariant() {
+     bool pal = v != "us";
+     if (pal && port::hiddenMansionPal() != port::Avail::Yes) pal = false;
+     if (!pal && port::hiddenMansionUs() != port::Avail::Yes) pal = true;
+-    const bool have = std::filesystem::exists(hostFile(overlayDir() + (usBase() ? "manifest.txt" : "usa/manifest.txt")));
++    std::error_code ec;  // (an unreadable folder is "not there", as in overlayDir)
++    const bool have = std::filesystem::exists(hostFile(overlayDir() + (usBase() ? "manifest.txt" : "usa/manifest.txt")), ec);
+     log("[hm] Hidden Mansion variant: %s on the %s game%s (overlay %s%s%s)", pal ? "PAL" : "USA", usBase() ? "USA" : "European",
+         sForced ? ", forced" : "", overlayDir().c_str(), have || pal != usBase() ? "" : ": missing, run tools/hidden_mansion_data.py",
+         have && !labOverlay() ? "; old format without the lab menu choice, rebuild it" : "");
+diff --git a/src/recomp/main.cpp b/src/recomp/main.cpp
+index de41b47..2a005fd 100644
+--- a/src/recomp/main.cpp
++++ b/src/recomp/main.cpp
+@@ -138,6 +138,20 @@ void logCallback(AuroraLogLevel level, const char* module, const char* message,
+ #ifdef LM_STATIC_MODULE
+ std::string findDisc(const char* gameId) {
+     if (!port::options().disc.empty()) return port::options().disc;
++#ifdef __PROSPERO__
++    // PS5: the player's disc image is in the title's folder, under any name ending in .iso (or
++    // .ciso): <gameId>.iso first, else the first one found. A title has no working folder.
++    std::error_code ec;
++    const std::filesystem::path title = "/app0";
++    if (const auto named = title / (std::string(gameId) + ".iso"); std::filesystem::exists(named, ec))
++        return named.string();
++    for (const auto& entry : std::filesystem::directory_iterator(title, ec)) {
++        const std::string ext = entry.path().extension().string();
++        if (entry.is_regular_file(ec) && (ext == ".iso" || ext == ".ISO" || ext == ".ciso" || ext == ".CISO"))
++            return entry.path().string();
++    }
++    return {};
++#endif
+     for (auto dir = std::filesystem::current_path();; dir = dir.parent_path()) {
+         const auto candidate = dir / "orig" / (std::string(gameId) + ".iso");
+         if (std::filesystem::exists(candidate)) return candidate.string();
+@@ -339,7 +353,11 @@ int main(int argc, char* argv[]) {
+ #endif
+     port::setPhase("loading the game");
+     if (disc.empty() || !aurora_dvd_open(disc.c_str())) {
++#ifdef __PROSPERO__
++        std::fprintf(stderr, "Could not open a Luigi's Mansion disc image: put your GLME01 .iso in /data/homebrew/<title>/.\n");
++#else
+         std::fprintf(stderr, "Could not open a Luigi's Mansion disc image. Pass --disc <path to .iso/.rvz>.\n");
++#endif
+         aurora_shutdown();
+         return 1;
+     }
+@@ -533,5 +551,11 @@ int main(int argc, char* argv[]) {
+     audio::outShutdown();
+     aurora_shutdown();
+     port::recovery::onExit();
++#ifdef __PROSPERO__
++    // PS5: a title that exits is reported as crashed; returning from main asks the shell to
++    // close it (ps5/src/platform.c catchReturnFromMain).
++    return 0;
++#else
+     std::_Exit(0);
++#endif
+ }
+diff --git a/src/recomp/menu.cpp b/src/recomp/menu.cpp
+index 7a62270..ac69315 100644
+--- a/src/recomp/menu.cpp
++++ b/src/recomp/menu.cpp
+@@ -1926,6 +1926,18 @@ void shutdown() {
+ void handleEvent(const SDL_Event& ev) {
+     if (recomp::controls::handleEvent(ev)) return;  // binding capture owns the key
+     if (recomp::dev::handleKey(ev)) return;
++#ifdef __PROSPERO__
++    // PS5: no keyboard. The touch pad's click (SDL's "back" here) opens and closes the menu, and
++    // the DualSense moves through it (ImGui's gamepad navigation: D-pad, Cross, Circle, L1/R1 tabs).
++    if (ev.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && ev.gbutton.button == SDL_GAMEPAD_BUTTON_BACK) {
++        sOpen = !sOpen;
++        if (!sOpen && sDirty) {
++            port::saveSettings();
++            sDirty = false;
++        }
++        return;
++    }
++#endif
+     if (ev.type != SDL_EVENT_KEY_DOWN || ev.key.repeat) return;
+     if (ev.key.key == SDLK_F1) sOpen = !sOpen;
+     else if (ev.key.key == SDLK_ESCAPE && sOpen) sOpen = false;
+@@ -2098,6 +2110,11 @@ void draw() {
+     }
+     updateToast();
+     refreshRateToast();
++#ifdef __PROSPERO__
++    // The DualSense drives the menu while it is open (and only then: the game has the pad otherwise)
++    if (sOpen) ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
++    else ImGui::GetIO().ConfigFlags &= ~ImGuiConfigFlags_NavEnableGamepad;
++#endif
+     if (!sOpen) return;
+     // Default 680 x 400 and at least 520 x 300 at 100%, scaled with the menu size and kept on the
+     // screen (ui_scale.cpp; after the first-use position, which would replace the one it sets).
+diff --git a/src/recomp/precache.cpp b/src/recomp/precache.cpp
+index b229aea..c059989 100644
+--- a/src/recomp/precache.cpp
++++ b/src/recomp/precache.cpp
+@@ -35,6 +35,8 @@ std::filesystem::path exeDir() {
+     wchar_t buf[MAX_PATH * 4];
+     const DWORD n = GetModuleFileNameW(nullptr, buf, DWORD(std::size(buf)));
+     return std::filesystem::path(std::wstring(buf, n)).parent_path();
++#elif defined(__PROSPERO__)
++    return "/app0";  // the title's folder (pipelines.bin is beside eboot.bin)
+ #else
+     return std::filesystem::read_symlink("/proc/self/exe").parent_path();
+ #endif
+diff --git a/src/recomp/sched.cpp b/src/recomp/sched.cpp
+index 12d3a98..90628ed 100644
+--- a/src/recomp/sched.cpp
++++ b/src/recomp/sched.cpp
+@@ -28,7 +28,16 @@ namespace recomp {
+ 
+ namespace {
+ bool sIrqPendingFlag = false;
++#if defined(__cpp_lib_atomic_ref)
+ std::atomic_ref<bool> irqPending() { return std::atomic_ref<bool>(sIrqPendingFlag); }
++#else
++// libc++ before 19 (the PS5 payload SDK's) has no std::atomic_ref: the same accesses, by hand.
++struct IrqPendingRef {
++    void store(bool v) const { __atomic_store_n(&sIrqPendingFlag, v, __ATOMIC_SEQ_CST); }
++    bool load() const { return __atomic_load_n(&sIrqPendingFlag, __ATOMIC_SEQ_CST); }
++};
++IrqPendingRef irqPending() { return {}; }
++#endif
+ }  // namespace
+ bool* g_irqPending = &sIrqPendingFlag;  // read by guest code (Ctx::poll)
+ bool g_shutdown = false;

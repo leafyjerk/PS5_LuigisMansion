@@ -1,0 +1,229 @@
+diff --git a/src/dawn/common/SystemUtils.cpp b/src/dawn/common/SystemUtils.cpp
+index df995f32a..87da23cc1 100644
+--- a/src/dawn/common/SystemUtils.cpp
++++ b/src/dawn/common/SystemUtils.cpp
+@@ -47,7 +47,7 @@
+ #include <mach-o/dyld.h>
+ 
+ #include <vector>
+-#elif DAWN_PLATFORM_IS(SWITCH)
++#elif DAWN_PLATFORM_IS(SWITCH) || DAWN_PLATFORM_IS(PS5)
+ #include <cstdlib>
+ #endif
+ 
+@@ -161,7 +161,7 @@ std::optional<std::string> GetExecutablePath() {
+ std::optional<std::string> GetExecutablePath() {
+     return {};
+ }
+-#elif DAWN_PLATFORM_IS(SWITCH)
++#elif DAWN_PLATFORM_IS(SWITCH) || DAWN_PLATFORM_IS(PS5)
+ std::optional<std::string> GetExecutablePath() {
+     return {};
+ }
+@@ -219,7 +219,7 @@ std::optional<std::string> GetModulePath() {
+ std::optional<std::string> GetModulePath() {
+     return {};
+ }
+-#elif DAWN_PLATFORM_IS(SWITCH)
++#elif DAWN_PLATFORM_IS(SWITCH) || DAWN_PLATFORM_IS(PS5)
+ std::optional<std::string> GetModulePath() {
+     return {};
+ }
+diff --git a/src/dawn/native/CMakeLists.txt b/src/dawn/native/CMakeLists.txt
+index f45b4fa1e..d019ff298 100644
+--- a/src/dawn/native/CMakeLists.txt
++++ b/src/dawn/native/CMakeLists.txt
+@@ -869,7 +869,7 @@ if (DAWN_ENABLE_VULKAN)
+             "vulkan/external_memory/MemoryServiceImplementationAHardwareBuffer.cpp"
+             "vulkan/external_semaphore/SemaphoreServiceImplementationFD.cpp"
+         )
+-    elseif (UNIX AND NOT APPLE)
++    elseif (UNIX AND NOT APPLE AND NOT DAWN_PLATFORM_PS5)
+         list(APPEND private_headers
+             "vulkan/external_memory/MemoryServiceImplementationDmaBuf.h"
+             "vulkan/external_memory/MemoryServiceImplementationOpaqueFD.h"
+diff --git a/src/dawn/native/Surface.cpp b/src/dawn/native/Surface.cpp
+index 8ebe3104c..6eefeee29 100644
+--- a/src/dawn/native/Surface.cpp
++++ b/src/dawn/native/Surface.cpp
+@@ -181,7 +181,7 @@ ResultOrError<UnpackedPtr<SurfaceDescriptor>> ValidateSurfaceDescriptor(
+             return descriptor;
+         }
+ #endif  // defined(DAWN_USE_WINDOWS_UI)
+-#if DAWN_PLATFORM_IS(SWITCH)
++#if DAWN_PLATFORM_IS(SWITCH) || DAWN_PLATFORM_IS(PS5)
+         case wgpu::SType::SurfaceSourceSwitchNWindow: {
+             auto* subDesc = descriptor.Get<SurfaceSourceSwitchNWindow>();
+             DAWN_ASSERT(subDesc != nullptr);
+diff --git a/src/dawn/native/vulkan/BackendVk.cpp b/src/dawn/native/vulkan/BackendVk.cpp
+index 064b572f5..9b8b0f780 100644
+--- a/src/dawn/native/vulkan/BackendVk.cpp
++++ b/src/dawn/native/vulkan/BackendVk.cpp
+@@ -69,7 +69,7 @@ constexpr char kVulkanLibName[] = "vulkan-1.dll";
+ constexpr char kVulkanLibName[] = "libvulkan.dylib";
+ #elif DAWN_PLATFORM_IS(FUCHSIA)
+ constexpr char kVulkanLibName[] = "libvulkan.so";
+-#elif DAWN_PLATFORM_IS(SWITCH)
++#elif DAWN_PLATFORM_IS(SWITCH) || DAWN_PLATFORM_IS(PS5)
+ constexpr char kVulkanLibName[] = "";
+ #else
+ #error "Unimplemented Vulkan backend platform"
+diff --git a/src/dawn/native/vulkan/SwapChainVk.cpp b/src/dawn/native/vulkan/SwapChainVk.cpp
+index 179453e57..5b3623f8e 100644
+--- a/src/dawn/native/vulkan/SwapChainVk.cpp
++++ b/src/dawn/native/vulkan/SwapChainVk.cpp
+@@ -687,6 +687,46 @@ ResultOrError<VkSurfaceKHR> CreateVulkanSurface(InstanceBase* instance,
+         }
+ #endif  // DAWN_PLATFORM_IS(SWITCH)
+ 
++#if DAWN_PLATFORM_IS(PS5)
++        case Surface::Type::SwitchNWindow: {
++            // The console's VideoOut, as VK_KHR_display's first display in its first mode.
++            if (info.HasExt(InstanceExt::Display)) {
++                VkPhysicalDevice vkPhysicalDevice = physicalDevice->GetVkPhysicalDevice();
++                uint32_t count = 1;
++                VkDisplayPropertiesKHR display = {};
++                VkResult result = VkResult::WrapUnsafe(fn.GetPhysicalDeviceDisplayPropertiesKHR(
++                    vkPhysicalDevice, &count, &display));
++                if ((result != VK_SUCCESS && result != VK_INCOMPLETE) || count == 0) {
++                    return DAWN_INTERNAL_ERROR("GetPhysicalDeviceDisplayPropertiesKHR");
++                }
++                count = 1;
++                VkDisplayModePropertiesKHR mode = {};
++                result = VkResult::WrapUnsafe(fn.GetDisplayModePropertiesKHR(
++                    vkPhysicalDevice, display.display, &count, &mode));
++                if ((result != VK_SUCCESS && result != VK_INCOMPLETE) || count == 0) {
++                    return DAWN_INTERNAL_ERROR("GetDisplayModePropertiesKHR");
++                }
++
++                VkDisplaySurfaceCreateInfoKHR createInfo = {};
++                createInfo.sType = VK_STRUCTURE_TYPE_DISPLAY_SURFACE_CREATE_INFO_KHR;
++                createInfo.displayMode = mode.displayMode;
++                createInfo.planeIndex = 0;
++                createInfo.planeStackIndex = 0;
++                createInfo.transform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
++                createInfo.globalAlpha = 1.0f;
++                createInfo.alphaMode = VK_DISPLAY_PLANE_ALPHA_OPAQUE_BIT_KHR;
++                createInfo.imageExtent = mode.parameters.visibleRegion;
++
++                VkSurfaceKHR vkSurface = VK_NULL_HANDLE;
++                DAWN_TRY(CheckVkSuccess(
++                    fn.CreateDisplayPlaneSurfaceKHR(vkInstance, &createInfo, nullptr, &*vkSurface),
++                    "CreateDisplayPlaneSurfaceKHR"));
++                return vkSurface;
++            }
++            break;
++        }
++#endif  // DAWN_PLATFORM_IS(PS5)
++
+ #if defined(DAWN_USE_WAYLAND)
+         case Surface::Type::WaylandSurface: {
+             if (info.HasExt(InstanceExt::WaylandSurface)) {
+diff --git a/src/dawn/native/vulkan/VulkanExtensions.cpp b/src/dawn/native/vulkan/VulkanExtensions.cpp
+index a327a83de..a3496b7c2 100644
+--- a/src/dawn/native/vulkan/VulkanExtensions.cpp
++++ b/src/dawn/native/vulkan/VulkanExtensions.cpp
+@@ -50,6 +50,7 @@ static constexpr std::array<InstanceExtInfo, kInstanceExtCount> sInstanceExtInfo
+     {InstanceExt::XlibSurface, "VK_KHR_xlib_surface"},
+     {InstanceExt::AndroidSurface, "VK_KHR_android_surface"},
+     {InstanceExt::ViSurface, "VK_NN_vi_surface"},
++    {InstanceExt::Display, "VK_KHR_display"},
+ 
+     {InstanceExt::DebugUtils, "VK_EXT_debug_utils"},
+     {InstanceExt::ValidationFeatures, "VK_EXT_validation_features"},
+@@ -104,6 +105,7 @@ InstanceExtSet EnsureDependencies(const InstanceExtSet& advertisedExts) {
+             case InstanceExt::XcbSurface:
+             case InstanceExt::XlibSurface:
+             case InstanceExt::ViSurface:
++            case InstanceExt::Display:
+                 hasDependencies = HasDep(InstanceExt::Surface);
+                 break;
+ 
+diff --git a/src/dawn/native/vulkan/VulkanExtensions.h b/src/dawn/native/vulkan/VulkanExtensions.h
+index 66d304128..a04f41d78 100644
+--- a/src/dawn/native/vulkan/VulkanExtensions.h
++++ b/src/dawn/native/vulkan/VulkanExtensions.h
+@@ -48,6 +48,7 @@ enum class InstanceExt : uint32_t {
+     XlibSurface,
+     AndroidSurface,
+     ViSurface,
++    Display,
+ 
+     // Others
+     DebugUtils,
+diff --git a/src/dawn/native/vulkan/VulkanFunctions.cpp b/src/dawn/native/vulkan/VulkanFunctions.cpp
+index 1dba51978..c9db13b01 100644
+--- a/src/dawn/native/vulkan/VulkanFunctions.cpp
++++ b/src/dawn/native/vulkan/VulkanFunctions.cpp
+@@ -35,7 +35,7 @@
+ 
+ namespace dawn::native::vulkan {
+ 
+-#if DAWN_PLATFORM_IS(SWITCH)
++#if DAWN_PLATFORM_IS(SWITCH) || DAWN_PLATFORM_IS(PS5)
+ extern "C" {
+ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vk_icdGetInstanceProcAddr(VkInstance instance, const char* pName);
+ }
+@@ -95,7 +95,7 @@ F AsVkFn(void(VKAPI_PTR* addr)()) {
+     } while (0)
+ 
+ MaybeError VulkanFunctions::LoadGlobalProcs(const DynamicLib& vulkanLib) {
+-#if DAWN_PLATFORM_IS(SWITCH)
++#if DAWN_PLATFORM_IS(SWITCH) || DAWN_PLATFORM_IS(PS5)
+     (void)vulkanLib;
+     GetInstanceProcAddr = reinterpret_cast<PFN_vkGetInstanceProcAddr>(
+         vk_icdGetInstanceProcAddr(VK_NULL_HANDLE, "vkGetInstanceProcAddr"));
+@@ -233,6 +233,12 @@ MaybeError VulkanFunctions::LoadInstanceProcs(VkInstance instance,
+     }
+ #endif  // defined(DAWN_USE_X11)
+ 
++    if (globalInfo.HasExt(InstanceExt::Display)) {
++        GET_INSTANCE_PROC(GetPhysicalDeviceDisplayPropertiesKHR);
++        GET_INSTANCE_PROC(GetDisplayModePropertiesKHR);
++        GET_INSTANCE_PROC(CreateDisplayPlaneSurfaceKHR);
++    }
++
+ #if defined(VK_USE_PLATFORM_VI_NN)
+     if (globalInfo.HasExt(InstanceExt::ViSurface)) {
+         GET_INSTANCE_PROC(CreateViSurfaceNN);
+diff --git a/src/dawn/native/vulkan/VulkanFunctions.h b/src/dawn/native/vulkan/VulkanFunctions.h
+index e61a0ba2c..4f8a84e9f 100644
+--- a/src/dawn/native/vulkan/VulkanFunctions.h
++++ b/src/dawn/native/vulkan/VulkanFunctions.h
+@@ -204,6 +204,11 @@ struct VulkanFunctions {
+     VkFn<PFN_vkCreateViSurfaceNN> CreateViSurfaceNN = nullptr;
+ #endif  // defined(VK_USE_PLATFORM_VI_NN)
+ 
++    // KHR_display, the PS5's only surface (VideoOut)
++    VkFn<PFN_vkGetPhysicalDeviceDisplayPropertiesKHR> GetPhysicalDeviceDisplayPropertiesKHR = nullptr;
++    VkFn<PFN_vkGetDisplayModePropertiesKHR> GetDisplayModePropertiesKHR = nullptr;
++    VkFn<PFN_vkCreateDisplayPlaneSurfaceKHR> CreateDisplayPlaneSurfaceKHR = nullptr;
++
+     // ---------- Instance procs for device extensions
+ 
+     // VK_KHR_cooperative_matrix
+diff --git a/src/utils/platform.h b/src/utils/platform.h
+index 9eee1aa91..aacc4c248 100644
+--- a/src/utils/platform.h
++++ b/src/utils/platform.h
+@@ -99,6 +99,10 @@
+ #elif defined(__SWITCH__)
+ #define DAWN_PLATFORM_IS_SWITCH 1
+ 
++#elif defined(__PROSPERO__)
++#define DAWN_PLATFORM_IS_PS5 1
++#define DAWN_PLATFORM_IS_POSIX 1
++
+ #else
+ #error "Unsupported platform."
+ #endif
+@@ -248,6 +252,9 @@ static_assert(sizeof(sizeof(char)) == 4, "Expect sizeof(size_t) == 4");
+ #if !defined(DAWN_PLATFORM_IS_SWITCH)
+ #define DAWN_PLATFORM_IS_SWITCH 0
+ #endif
++#if !defined(DAWN_PLATFORM_IS_PS5)
++#define DAWN_PLATFORM_IS_PS5 0
++#endif
+ 
+ #if !defined(DAWN_PLATFORM_IS_X86)
+ #define DAWN_PLATFORM_IS_X86 0

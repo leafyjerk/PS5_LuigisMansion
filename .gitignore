@@ -1,0 +1,15 @@
+# Built, fetched or the player's own: never committed
+/build/
+/dist/
+/.deps/
+/gamedata/
+/logs/
+/.env
+*.iso
+*.rvz
+*.ciso
+*.wia
+*.gcz
+*.elf
+.DS_Store
+__pycache__/
