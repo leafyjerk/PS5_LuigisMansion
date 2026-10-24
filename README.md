@@ -51,7 +51,9 @@ and Mihawk's PS5 Vulkan stack.
      it doesn't know the app, choose **More info**, then **Run anyway**.
    - **Linux**: `LuigisMansion-PS5-Builder-1.0.0-linux.zip` gives you the same folder. Open
      **Luigi's Mansion PS5 Builder** in it (`./install-desktop-entry.sh` adds it to your app menu).
-2. **Drop your disc image onto the window**, or click **Choose…** and pick it.
+2. **Drop your disc image onto the window**, or click **Choose…** and pick it. (The builder
+   plays a little waltz while you work: the orb and the ghost slider in the top right corner
+   pause it and set its volume, and it remembers your choice.)
 3. The title is saved on your **Desktop**. **Change…** picks another folder (on a drive with
    about 5 GB free).
 4. Click **Build**. The window shows each step as it goes: checking your disc (another game or
@@ -113,6 +115,17 @@ If you'd rather do it by hand, the files are:
 in `/data/homebrew/PPSA99351/`, and the home screen's own copy of them in
 `/user/appmeta/PPSA99351/` (replace both; then restart ShadowMountPlus or the console). Copying a
 new build over the title puts the port's art back: swap it again after an update.
+
+### Home screen music (optional)
+
+The PS5 plays `sce_sys/snd0.at9` while a title is selected on the home screen. The builder
+can't make it for you: it has to be Sony's ATRAC9 format, and there is no free ATRAC9 encoder
+(FFmpeg only decodes it). If you have an ATRAC9 file, or an art-swapping app that sets title
+music, put it in place as `sce_sys/snd0.at9` (48 kHz stereo, up to 2 MB) in both folders above.
+
+Building from source with an ATRAC9 encoder you're permitted to use,
+`ps5/tools/make-snd0.sh --at9-tool ENCODER` makes it from the builder's waltz (or any audio file
+you give it) with PS5_Vulkan's asset tool, and every build and kit after that includes it.
 
 ### If something's wrong
 
@@ -210,6 +223,8 @@ title, which comes prebuilt in its kit (the method of the Super Mario Galaxy por
 | [SDL3](https://libsdl.org) | Sam Lantinga and contributors | The title's window, sound and pad; the builder app's window and dialogs |
 | [Dear ImGui](https://github.com/ocornut/imgui) | Omar Cornut and contributors | The game's options menu; the builder app |
 | [LLVM](https://llvm.org) | the LLVM project | clang and lld: they build the title here and, in the kit, on the player's computer |
+| [dr_mp3](https://github.com/mackron/dr_libs) | David Reid | Decodes the builder app's music |
+| "Sneaky Waltz" | leafyjerk (made with Suno) | The builder app's music |
 | Creepster, DejaVu, Kenney's Input Prompts | Sideshow; the DejaVu authors; Kenney | The app's title and text fonts; this README's button pictures |
 
 The full list, with licences, is [CREDITS.md](CREDITS.md).

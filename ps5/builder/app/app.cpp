@@ -34,7 +34,12 @@
 #include <sys/types.h>
 #endif
 
-#include "app_fonts.h"  // generated: kCreepster, kDejaVuSans, kDejaVuSansBold (ps5/builder/build-app.sh)
+#include "app_fonts.h"  // generated: kCreepster, kDejaVuSans, kDejaVuSansBold (ps5/builder/build-tools.sh)
+#include "app_music.h"  // generated: kMusic, "Sneaky Waltz" (ps5/builder/app/music)
+
+#define DR_MP3_IMPLEMENTATION
+#define DR_MP3_NO_STDIO
+#include "dr_mp3.h"
 
 namespace fs = std::filesystem;
 
@@ -187,7 +192,7 @@ void draw_scenery(ImVec2 size, float scale, float t) {
         const float twinkle = 0.45f + 0.55f * std::sin(t * (0.8f + hash01(i + 77) * 2.2f) + i);
         d->AddCircleFilled(p, (hash01(i + 5) < 0.85f ? 1.0f : 1.8f) * scale, IM_COL32(220, 222, 255, static_cast<int>(200 * twinkle)), 8);
     }
-    const ImVec2 moon(size.x - 110 * scale, 92 * scale);
+    const ImVec2 moon(size.x - 110 * scale, 116 * scale);
     for (int i = 16; i >= 1; --i) d->AddCircleFilled(moon, (44 + i * 4.5f) * scale, IM_COL32(150, 150, 200, 4), 48);
     d->AddCircleFilled(moon, 44 * scale, IM_COL32(236, 232, 190, 255), 64);
     // The mansion in the corner, small enough to keep clear of the text
@@ -195,6 +200,76 @@ void draw_scenery(ImVec2 size, float scale, float t) {
     // Mist along the foot
     d->AddRectFilledMultiColor(ImVec2(0, size.y - 120 * scale), size, IM_COL32(70, 70, 110, 0), IM_COL32(70, 70, 110, 0),
                                IM_COL32(70, 70, 110, 90), IM_COL32(70, 70, 110, 90));
+}
+
+// ---- the music ------------------------------------------------------------------------------------
+// "Sneaky Waltz" (leafyjerk, made with Suno), decoded once (dr_mp3) and looped through an SDL
+// audio stream; the volume is the stream's gain. Whether it plays and how loud are remembered
+// (music.txt in the app's preference folder).
+struct Music {
+    SDL_AudioStream* stream = nullptr;
+    std::vector<Sint16> samples;  // interleaved
+    int channels = 2;
+    std::size_t position = 0;     // in samples
+    bool playing = true;
+    float volume = 0.5f;
+    std::string settings;
+} g_music;
+
+void SDLCALL feed_music(void*, SDL_AudioStream* stream, int additional, int) {
+    if (g_music.samples.empty()) return;
+    std::vector<Sint16> chunk(static_cast<std::size_t>(additional) / sizeof(Sint16));
+    for (Sint16& s : chunk) {
+        s = g_music.samples[g_music.position];
+        if (++g_music.position >= g_music.samples.size()) g_music.position = 0;  // the loop
+    }
+    SDL_PutAudioStreamData(stream, chunk.data(), static_cast<int>(chunk.size() * sizeof(Sint16)));
+}
+
+void save_music_settings() {
+    if (g_music.settings.empty()) return;
+    if (SDL_IOStream* io = SDL_IOFromFile(g_music.settings.c_str(), "w")) {
+        SDL_IOprintf(io, "playing=%d\nvolume=%.2f\n", g_music.playing ? 1 : 0, g_music.volume);
+        SDL_CloseIO(io);
+    }
+}
+
+void start_music() {
+    if (char* pref = SDL_GetPrefPath("leafyjerk", "Luigi's Mansion PS5 Builder")) {
+        g_music.settings = std::string(pref) + "music.txt";
+        SDL_free(pref);
+        if (SDL_IOStream* io = SDL_IOFromFile(g_music.settings.c_str(), "r")) {
+            char text[128] = {};
+            SDL_ReadIO(io, text, sizeof text - 1);
+            SDL_CloseIO(io);
+            int playing = 1;
+            float volume = 0.5f;
+            if (std::sscanf(text, "playing=%d\nvolume=%f", &playing, &volume) == 2) {
+                g_music.playing = playing != 0;
+                g_music.volume = std::clamp(volume, 0.0f, 1.0f);
+            }
+        }
+    }
+    drmp3_config config{};
+    drmp3_uint64 frames = 0;
+    drmp3_int16* pcm = drmp3_open_memory_and_read_pcm_frames_s16(kMusic, sizeof kMusic, &config, &frames, nullptr);
+    if (pcm == nullptr || frames == 0) return;
+    g_music.channels = static_cast<int>(config.channels);
+    g_music.samples.assign(pcm, pcm + frames * config.channels);
+    drmp3_free(pcm, nullptr);
+    const SDL_AudioSpec spec{SDL_AUDIO_S16, g_music.channels, static_cast<int>(config.sampleRate)};
+    g_music.stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, feed_music, nullptr);
+    if (g_music.stream == nullptr) return;  // no sound device: the controls stay hidden
+    SDL_SetAudioStreamGain(g_music.stream, g_music.volume * g_music.volume);  // a gentler curve
+    if (g_music.playing) SDL_ResumeAudioStreamDevice(g_music.stream);
+}
+
+void set_music_playing(bool playing) {
+    g_music.playing = playing;
+    if (g_music.stream == nullptr) return;
+    if (playing) SDL_ResumeAudioStreamDevice(g_music.stream);
+    else SDL_PauseAudioStreamDevice(g_music.stream);
+    save_music_settings();
 }
 
 // ---- the builder's process --------------------------------------------------------------------
@@ -394,7 +469,20 @@ void open_folder(const std::string& folder) {
 
 // ---- drawing the window ---------------------------------------------------------------------------
 bool spooky_button(const char* label, ImVec2 size, bool primary, bool enabled = true) {
-    if (!enabled) ImGui::BeginDisabled();
+    if (!enabled) {
+        // Solid, not see-through: the scenery stays behind it
+        ImGui::PushStyleVar(ImGuiStyleVar_DisabledAlpha, 1.0f);
+        ImGui::BeginDisabled();
+        ImGui::PushFont(g_bold, 0.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.20f, 0.22f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.48f, 0.56f, 0.56f, 1.0f));
+        ImGui::Button(label, size);
+        ImGui::PopStyleColor(2);
+        ImGui::PopFont();
+        ImGui::EndDisabled();
+        ImGui::PopStyleVar();
+        return false;
+    }
     if (primary) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.52f, 0.38f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.66f, 0.48f, 1.0f));
@@ -406,13 +494,10 @@ bool spooky_button(const char* label, ImVec2 size, bool primary, bool enabled = 
     if (primary) {
         ImGui::PopFont();
         ImGui::PopStyleColor(4);
-        if (enabled) {
-            const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
-            ImGui::GetWindowDrawList()->AddRect(ImVec2(a.x - 3, a.y - 3), ImVec2(b.x + 3, b.y + 3), col(kGhostGlow, 0.35f),
-                                                ImGui::GetStyle().FrameRounding + 3, 2.0f);
-        }
+        const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
+        ImGui::GetWindowDrawList()->AddRect(ImVec2(a.x - 3, a.y - 3), ImVec2(b.x + 3, b.y + 3), col(kGhostGlow, 0.35f),
+                                            ImGui::GetStyle().FrameRounding + 3, 2.0f);
     }
-    if (!enabled) ImGui::EndDisabled();
     return pressed;
 }
 
@@ -448,6 +533,72 @@ void draw_title(float scale, float t, bool blink) {
     ImGui::TextColored(kMuted, "Makes the PS5 title from your own disc. Nothing of the game comes with this app.");
 }
 
+// The music's controls in the top right corner: a volume slider whose knob is a small ghost, and a
+// glowing play/pause orb with notes drifting up from it while the waltz plays
+void draw_music_controls(float scale, float t) {
+    if (g_music.stream == nullptr) return;
+    ImDrawList* d = ImGui::GetWindowDrawList();
+    const ImVec2 saved = ImGui::GetCursorScreenPos();
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    const float r = 19 * scale;
+    const ImVec2 orb(vp->Pos.x + vp->Size.x - 26 * scale - r, vp->Pos.y + 20 * scale + r);
+
+    // Play / pause
+    ImGui::SetCursorScreenPos(ImVec2(orb.x - r, orb.y - r));
+    if (ImGui::InvisibleButton("##music", ImVec2(r * 2, r * 2))) set_music_playing(!g_music.playing);
+    const bool hovered = ImGui::IsItemHovered();
+    if (hovered) ImGui::SetTooltip(g_music.playing ? "Pause the music" : "Play the music");
+    const float pulse = g_music.playing ? 0.5f + 0.5f * std::sin(t * 2.4f) : 0.0f;
+    for (int i = 8; i >= 1; --i) {
+        d->AddCircleFilled(orb, r + static_cast<float>(i) * 2.2f * scale, col(kGhostGlow, (0.018f + 0.012f * pulse) * (hovered ? 1.6f : 1.0f)), 40);
+    }
+    d->AddCircleFilled(orb, r, IM_COL32(26, 18, 48, 235), 40);
+    d->AddCircle(orb, r, col(kGhostGlow, hovered ? 0.95f : 0.6f), 40, 2.0f * scale);
+    const ImU32 icon = col(kLantern, hovered ? 1.0f : 0.9f);
+    if (g_music.playing) {
+        const float w = 4.5f * scale, h = 14 * scale, gap = 3.5f * scale;
+        d->AddRectFilled(ImVec2(orb.x - gap - w, orb.y - h / 2), ImVec2(orb.x - gap, orb.y + h / 2), icon, 1.5f * scale);
+        d->AddRectFilled(ImVec2(orb.x + gap, orb.y - h / 2), ImVec2(orb.x + gap + w, orb.y + h / 2), icon, 1.5f * scale);
+        // Notes drifting down from the orb, swaying and fading (the window's top edge is too near
+        // for them to rise)
+        ImGui::PushFont(g_body, 14.0f);
+        for (int i = 0; i < 3; ++i) {
+            const float phase = std::fmod(t * 0.35f + static_cast<float>(i) / 3.0f, 1.0f);
+            const ImVec2 p(orb.x - 5 * scale + std::sin(phase * 6.28f + static_cast<float>(i) * 2.1f) * 9 * scale,
+                           orb.y + r - 6 * scale + phase * 30 * scale);
+            const float fade = phase < 0.15f ? phase / 0.15f : 1.0f - phase;
+            d->AddText(p, col(kGhostGlow, fade * 0.85f), i == 1 ? "\xe2\x99\xab" : "\xe2\x99\xaa");
+        }
+        ImGui::PopFont();
+    } else {
+        const float s = 8 * scale;
+        d->AddTriangleFilled(ImVec2(orb.x - s * 0.7f, orb.y - s), ImVec2(orb.x - s * 0.7f, orb.y + s), ImVec2(orb.x + s, orb.y), icon);
+    }
+
+    // Volume: a glowing track and a small ghost for its knob
+    const float width = 118 * scale, height = 26 * scale;
+    const ImVec2 a(orb.x - r - 22 * scale - width, orb.y - height / 2);
+    ImGui::SetCursorScreenPos(a);
+    ImGui::InvisibleButton("##volume", ImVec2(width, height));
+    if (ImGui::IsItemActive()) {
+        const float v = std::clamp((ImGui::GetIO().MousePos.x - a.x) / width, 0.0f, 1.0f);
+        if (v != g_music.volume) {
+            g_music.volume = v;
+            SDL_SetAudioStreamGain(g_music.stream, v * v);
+        }
+    }
+    if (ImGui::IsItemDeactivated()) save_music_settings();
+    if (ImGui::IsItemHovered() || ImGui::IsItemActive()) ImGui::SetTooltip("Volume %d%%", static_cast<int>(g_music.volume * 100 + 0.5f));
+    const float track_y = orb.y, th = 5 * scale;
+    d->AddRectFilled(ImVec2(a.x, track_y - th / 2), ImVec2(a.x + width, track_y + th / 2), IM_COL32(38, 26, 66, 230), th);
+    const float fill = a.x + width * g_music.volume;
+    d->AddRectFilledMultiColor(ImVec2(a.x, track_y - th / 2), ImVec2(fill, track_y + th / 2), col(kGhostGlow, 0.35f),
+                               col(kGhostGlow, 0.95f), col(kGhostGlow, 0.95f), col(kGhostGlow, 0.35f));
+    draw_ghost(d, ImVec2(fill, track_y - 1 * scale + std::sin(t * 2.0f) * 1.2f * scale), 17 * scale, 1.0f, false);
+
+    ImGui::SetCursorScreenPos(saved);
+}
+
 void draw_window(float scale, float t) {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
     draw_scenery(vp->Size, scale, t);
@@ -456,6 +607,7 @@ void draw_window(float scale, float t) {
     ImGui::Begin("builder", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoSavedSettings |
                                          ImGuiWindowFlags_NoBringToFrontOnFocus);
     const bool blink = std::fmod(t, 4.3f) < 0.14f;
+    draw_music_controls(scale, t);
     draw_title(scale, t, blink);
     ImGui::Dummy(ImVec2(0, 6 * scale));
 
@@ -603,7 +755,7 @@ int main(int argc, char** argv) {
         else if (a == "--out" && i + 1 < argc) g_app.out = argv[++i];
         else if (a == "--build") auto_build = true;
     }
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS | SDL_INIT_AUDIO) && !SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS)) {
         std::fprintf(stderr, "SDL_Init: %s\n", SDL_GetError());
         return 1;
     }
@@ -654,6 +806,7 @@ int main(int argc, char** argv) {
         g_app.out = out;
     }
     reset_steps();
+    start_music();
     if (auto_build && !g_app.disc.empty()) start_build();
 
     const Uint64 start = SDL_GetTicks();
@@ -702,6 +855,7 @@ int main(int argc, char** argv) {
     }
     cancel_build();
     if (g_build.reader.joinable()) g_build.reader.join();
+    if (g_music.stream != nullptr) SDL_DestroyAudioStream(g_music.stream);
     ImGui_ImplSDLRenderer3_Shutdown();
     ImGui_ImplSDL3_Shutdown();
     ImGui::DestroyContext();

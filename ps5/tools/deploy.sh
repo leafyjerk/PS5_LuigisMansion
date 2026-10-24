@@ -64,7 +64,7 @@ done
 # The home screen shows the copy of the art the console made when it registered the title
 # (/user/appmeta/<TITLE_ID>): a title already registered keeps its old pictures unless that copy
 # is refreshed too (as the Super Mario Galaxy port's deploy does)
-for art in icon0.png pic0.dds pic1.dds; do
+for art in icon0.png pic0.dds pic1.dds snd0.at9; do
     [[ -f $dist/sce_sys/$art ]] || continue
     curl -s -T "$dist/sce_sys/$art" "ftp://$host/user/appmeta/$title_id/$art" 2>/dev/null &&
         echo "  appmeta/$art" || true

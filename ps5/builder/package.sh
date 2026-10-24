@@ -39,6 +39,10 @@ cp "$deps/SDL/LICENSE.txt" "$folder/licenses/SDL3-Zlib.txt"
 cp "$deps/imgui/LICENSE.txt" "$folder/licenses/DearImGui-MIT.txt"
 cp "$root/.deps/llvm/LICENSE.TXT" "$folder/licenses/LLVM.txt"
 cp "$root/ps5/licenses/MIT.txt" "$folder/licenses/nod-MIT.txt"
+# dr_mp3's licence: the end of its header, from the licence's heading on
+sed -n '/^This software is available as a choice of the following licenses/,$p' "$deps/dr_libs/dr_mp3.h" |
+    sed '/^\*\//q' > "$folder/licenses/dr_mp3.txt"
+[[ -s $folder/licenses/dr_mp3.txt ]] || echo "dr_mp3 (David Reid): public domain (Unlicense) or MIT No Attribution" > "$folder/licenses/dr_mp3.txt"
 cp "$root/CREDITS.md" "$folder/CREDITS.md"
 
 if [[ $platform == windows ]]; then
@@ -86,6 +90,9 @@ $readme_run
 The home screen art (icon, background, splash) is the port's own. To use your
 own pictures, use an art-swapping homebrew app for the PS5 (ArtSwap or
 similar) on Luigi's Mansion (PPSA99351).
+
+The music in this app is "Sneaky Waltz" (leafyjerk, made with Suno): the orb in
+the top right corner pauses it, the ghost slider sets its volume.
 
 Nothing of the game comes with this builder: you need your own disc.
 

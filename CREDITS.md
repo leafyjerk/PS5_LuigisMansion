@@ -36,13 +36,18 @@ support their projects. What each one does in the port is in the README's
   pad, and the builder app's window and dialogs.
 - [Dear ImGui](https://github.com/ocornut/imgui) (Omar Cornut and contributors, MIT): the game's
   options menu and the builder app.
+- [dr_mp3](https://github.com/mackron/dr_libs) (David Reid, public domain or MIT-0): decodes the
+  builder app's music.
 - [LLVM](https://llvm.org) (Apache-2.0 WITH LLVM-exception): clang and lld, which build the title
   here and on the player's computer.
 - [zlib](https://zlib.net) (Jean-loup Gailly and Mark Adler), and the libraries Aurora and Dawn
   fetch: fmt, zstd, libpng, FreeType, SQLite, xxHash, Abseil, Tracy and others, each under its
   own permissive licence.
 
-## Art
+## Art and music
+
+- **"Sneaky Waltz"** by leafyjerk, made with Suno: the builder app's music
+  (`ps5/builder/app/music/sneaky-waltz.mp3`). Original; not from the game.
 
 - **Creepster** by Sideshow ([Google Fonts](https://fonts.google.com/specimen/Creepster), SIL Open
   Font Licence 1.1): the builder app's title.
