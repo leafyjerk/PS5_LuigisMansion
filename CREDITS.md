@@ -1,7 +1,14 @@
 # Credits
 
 This port is a small layer over other people's work. Everything below is theirs; please
-support their projects.
+support their projects. What each one does in the port is in the README's
+[Acknowledgements](README.md#acknowledgements-and-what-each-project-does-here).
+
+## This port
+
+- **leafyjerk**: the port, its testing on the PS5, and this repository.
+- **Claude** (Anthropic's AI model, used through Claude Code): wrote most of the port's code,
+  scripts, builder and documentation with leafyjerk.
 
 ## The game's code on the PC
 

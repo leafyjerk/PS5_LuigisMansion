@@ -10,7 +10,12 @@
 for the console. Version 1.0.0.
 
 You make the title yourself, from **your own disc**, with a small builder app for Windows or
-Linux. Nothing of the game is in any download here.
+Linux. Nothing of the game is in any download here: no code, no data, no Nintendo or Sony
+software (see [Legal](#legal)).
+
+This port stands on other people's work, credited below with what each part does here: above
+all rob646464's Luigi's Mansion Recompiled, Gary Riches' Super Mario Galaxy and Dusklight ports,
+and Mihawk's PS5 Vulkan stack.
 
 > **USA disc only.** You need your own image of **Luigi's Mansion for the USA (`GLME01`)**. The
 > European and Japanese releases are not supported yet. The builder checks your image before it
@@ -90,6 +95,25 @@ When you're done it looks like this:
 
 The defaults are the best picture: 4K, 60 frames a second, widescreen.
 
+### Changing the home screen art (optional)
+
+The title comes with its own art: an icon, a background and a start-up splash, all drawn for
+this port (a cartoon ghost and a moonlit mansion; nothing from the game). To use pictures of
+your own, use an **art-swapping homebrew app for the PS5** (ArtSwap or similar), the same way as
+for any other title: pick **Luigi's Mansion** (`PPSA99351`) and choose your pictures.
+
+If you'd rather do it by hand, the files are:
+
+| File | What it is | Form |
+| --- | --- | --- |
+| `sce_sys/icon0.png` | the icon | 512x512 PNG |
+| `sce_sys/pic0.dds` | the home screen's background | 3840x2160 DDS (BC7) |
+| `sce_sys/pic1.dds` | the splash while it starts | 3840x2160 DDS (BC7) |
+
+in `/data/homebrew/PPSA99351/`, and the home screen's own copy of them in
+`/user/appmeta/PPSA99351/` (replace both; then restart ShadowMountPlus or the console). Copying a
+new build over the title puts the port's art back: swap it again after an update.
+
 ### If something's wrong
 
 - **It isn't on the home screen**: restart ShadowMountPlus (or the console).
@@ -146,6 +170,51 @@ The game's own prompts still show the GameCube's buttons: **A** is
 - Played on a PS5 through the start, the file select and into the game; not yet to the end.
 
 ## How it works
+
+### The approach
+
+The PS5 cannot run GameCube code, and this port does not emulate it. Instead, the game's
+PowerPC machine code is **translated ahead of time into C++** (static recompilation), that C++ is
+**compiled for the PS5's x86-64 CPU**, and it runs on a **runtime** that does the jobs of the
+GameCube's hardware and system software: its graphics (GX) on modern graphics APIs, its sound
+chip, its pads, memory cards and disc drive.
+
+All of that already existed for the PC, in Luigi's Mansion Recompiled. What this port adds is
+what the PS5 needs on top: the same program built with the PS5's toolchain, its graphics drawn
+through Vulkan on the console's GPU, its window, sound and pad going to the console's own, its
+files in the title's folder, and the handful of things a PS5 title may not do (exit, ask for its
+working folder, look outside its folder) answered instead. Most of those answers were found by
+the PS5 ports before it, which this port reuses.
+
+Because the translated code comes from the player's disc, nothing of the game is shipped: the
+**builder** does the translation on the player's own computer and links it with the rest of the
+title, which comes prebuilt in its kit (the method of the Super Mario Galaxy port's builder).
+
+### Acknowledgements, and what each project does here
+
+| Project | Author | What it does in this port |
+| --- | --- | --- |
+| [Luigi's Mansion Recompiled](https://github.com/rob646464/luigis-mansion-recompiled) | rob646464 | **The game itself on modern hardware**: the recompiler that translates the disc's `main.dol`, the runtime, the sound, the frame interpolation, widescreen, enhancements and the options menu. The port builds its static build (`lmrecomp`) for the PS5, with `ps5/patches/lm-recomp.patch` |
+| [lm-decomp](https://github.com/SomeJakeGuy/lm-decomp) | SomeJakeGuy and contributors | The symbol map and splits the recompiler uses to find the game's functions |
+| [Dusklight](https://github.com/TwilitRealm/dusklight) | Twilit Realm | The JSystem base Luigi's Mansion Recompiled adapted |
+| [Aurora](https://github.com/encounter/aurora) | Luke Street (encounter) | The GameCube's graphics, pads, memory cards and disc access on modern APIs (inside Luigi's Mansion Recompiled) |
+| [nod](https://github.com/encounter/nod) | Luke Street (encounter) | Reads every GameCube disc format: the builder's `nodtool` checks the disc, writes the plain `.iso` the console reads and extracts `main.dol` |
+| [Dawn](https://dawn.googlesource.com/dawn) ([fork](https://github.com/encounter/dawn)) | Google, Luke Street | WebGPU, which Aurora draws with, on Vulkan |
+| [PS5_Dusklight](https://github.com/griches/PS5_Dusklight) | Gary Riches (griches) | **The PS5 side of Aurora's stack**: Dawn's patch for the console's display and driver, SDL3's PS5 video, sound and DualSense drivers, the PS5 disc reader, the start-up, shims and link script |
+| [PS5_MarioGalaxy](https://github.com/griches/PS5_MarioGalaxy) | Gary Riches (griches) | **This repository's model**: its layout, and its builder's design (the recorded link, the kit, the steps and how the app talks to the builder); the fixes for `exit` and `getcwd` a title needs |
+| [PS5_Vulkan](https://github.com/mihawk-99/PS5_Vulkan), [PS5_Mesa](https://github.com/mihawk-99/PS5_Mesa) | Mihawk | **Vulkan on the PS5**: RADV for the console's GPU, linked into the title, its link recipe, start-up code and `ps5-native-tool` (which makes the PS5 executable) |
+| [PS5_PayloadSDK](https://github.com/mihawk-99/PS5_PayloadSDK), [PS5 Vulkan Template](https://github.com/mihawk-99/PS5_VulkanTemplate) | Mihawk | The SDK fork and its platform layer (the console's libc gaps, the heap, klog); the template's `platform.c` (pad, sound, exit) |
+| [ps5-payload-sdk](https://github.com/ps5-payload-dev/sdk) | John Törnblom | The PS5 SDK: headers, libraries and toolchain the title is built with |
+| ps5-native-app-boilerplate | BlackBearReloaded | The `libc.prx` module and the native-app tools PS5_Vulkan builds on |
+| [Mesa](https://mesa3d.org) | the Mesa project | RADV, the Vulkan driver itself |
+| [SDL3](https://libsdl.org) | Sam Lantinga and contributors | The title's window, sound and pad; the builder app's window and dialogs |
+| [Dear ImGui](https://github.com/ocornut/imgui) | Omar Cornut and contributors | The game's options menu; the builder app |
+| [LLVM](https://llvm.org) | the LLVM project | clang and lld: they build the title here and, in the kit, on the player's computer |
+| Creepster, DejaVu, Kenney's Input Prompts | Sideshow; the DejaVu authors; Kenney | The app's title and text fonts; this README's button pictures |
+
+The full list, with licences, is [CREDITS.md](CREDITS.md).
+
+### In more detail
 
 - **Luigi's Mansion Recompiled**
   ([rob646464/luigis-mansion-recompiled](https://github.com/rob646464/luigis-mansion-recompiled))
@@ -215,7 +284,10 @@ a cartoon ghost, a moonlit night and a mansion on a hill. Nothing in them is fro
 
 ## Credits
 
-See [CREDITS.md](CREDITS.md). In short:
+This port: **leafyjerk**, developed with **Claude** (Anthropic's AI model, in Claude Code), which
+wrote most of its code, scripts and documentation alongside the testing on a real PS5.
+
+Everyone it is built on: [CREDITS.md](CREDITS.md), and the table above. In short:
 
 - **Luigi's Mansion Recompiled** by **rob646464**: the recompiler and runtime this port is built on.
 - **lm-decomp** by **SomeJakeGuy** and contributors; **Dusklight** by **Twilit Realm**.
@@ -236,5 +308,18 @@ are MIT or Zlib. The title and the builder carry every component's licence text 
 Luigi's Mansion Recompiled is a submodule here, not a copy; its repository states no licence,
 so its code is its author's, used here with credit.
 
-Not affiliated with or endorsed by Nintendo. Luigi's Mansion is a trademark of Nintendo. No part
-of the game is in this repository or its downloads: the title is made from your own disc.
+## Legal
+
+- **No part of the game is in this repository or its downloads**: no code, data, artwork or
+  disc image of Luigi's Mansion, and no Nintendo or Sony software or keys. The title is made
+  from **your own disc**: you need your own copy of the game and your own dump of it
+  ([how](https://wiki.dolphin-emu.org/index.php?title=Ripping_Games)). Please don't ask for
+  disc images or builds here.
+- **The title you build contains code translated from your disc, and your disc image. It is
+  for your own console: please don't share it.**
+- This is an unofficial fan project. Not affiliated with or endorsed by Nintendo, Sony
+  Interactive Entertainment, or any of the projects credited above (please don't take PS5
+  problems to them). Luigi's Mansion and GameCube are trademarks of Nintendo; PlayStation and
+  PS5 are trademarks of Sony Interactive Entertainment.
+- The home screen art and the builder's look are the port's own, made for it: nothing in them
+  is from the game.

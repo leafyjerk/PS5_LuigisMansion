@@ -83,6 +83,12 @@ $readme_run
 4. Start Luigi's Mansion from the home screen. Click the touch pad for the
    settings.
 
+The home screen art (icon, background, splash) is the port's own. To use your
+own pictures, use an art-swapping homebrew app for the PS5 (ArtSwap or
+similar) on Luigi's Mansion (PPSA99351).
+
+Nothing of the game comes with this builder: you need your own disc.
+
 $keep
 The title you build contains code translated from your disc: it is for your
 own console, please don't share it.
